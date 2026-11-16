@@ -4,3 +4,8 @@ local.properties
 .idea/
 *.iml
 .DS_Store
+# Downloaded by CI, see .github/workflows/build.yml
+app/src/main/assets/yamnet.tflite
+# Signing key: never commit
+*.jks
+keystore/
