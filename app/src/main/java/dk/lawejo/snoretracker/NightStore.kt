@@ -7,7 +7,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** One folder per night: night.json, scores.csv and clips/*.wav. */
+/** One folder per night: night.json, scores.csv and a clips folder with .wav files. */
 object NightStore {
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
 
