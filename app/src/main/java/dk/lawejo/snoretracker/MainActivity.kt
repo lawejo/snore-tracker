@@ -1,6 +1,7 @@
 package dk.lawejo.snoretracker
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
 import android.net.Uri
@@ -47,6 +48,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -139,6 +141,7 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
     var night by remember(dir) { mutableStateOf(NightStore.load(dir)) }
     var playing by remember { mutableStateOf<String?>(null) }
     val player = remember { MediaPlayer() }
+    val context = androidx.compose.ui.platform.LocalContext.current
     DisposableEffect(Unit) { onDispose { player.release() } }
 
     fun play(clip: String) {
@@ -194,12 +197,24 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
             }
         }
 
+        TextButton(onClick = { shareScores(context, dir) }) { Text("Del data (scores.csv)") }
+
         if (!(recording && n.endMs == null)) {
             TextButton(onClick = { NightStore.deleteNight(dir); onBack() }) {
                 Text("Slet hele natten", color = MaterialTheme.colorScheme.error)
             }
         }
     }
+}
+
+/** Sends the night's scores.csv to another app (mail, Drive …) so the thresholds can be tuned. */
+private fun shareScores(context: Context, dir: File) {
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(dir, "scores.csv"))
+    val send = Intent(Intent.ACTION_SEND)
+        .setType("text/csv")
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    context.startActivity(Intent.createChooser(send, null))
 }
 
 /** The night as a bar, with a red mark for every snore period. */
