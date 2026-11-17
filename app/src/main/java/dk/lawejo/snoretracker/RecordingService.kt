@@ -25,6 +25,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** Records the whole night in the foreground and saves a clip whenever snoring is detected. */
 class RecordingService : Service() {
@@ -48,6 +51,10 @@ class RecordingService : Service() {
         private val COMPETITORS = listOf("Speech", "Laughter", "Cough")
         private const val PRE_ROLL = 5 * Audio.SAMPLE_RATE
         private const val MAX_CLIP_MS = 30_000L
+
+        // Diagnostics: a fixed sample of the night, whether or not snoring is detected.
+        private const val SAMPLE_EVERY_MS = 10 * 60_000L
+        private const val SAMPLE_MS = 30_000L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -98,12 +105,16 @@ class RecordingService : Service() {
         val floor = NoiseFloor()
         val detector = EventDetector()
         val csv = File(dir, "scores.csv").bufferedWriter()
-        csv.write("time,db,floor,snoring,competitor,top,topScore,positive\n")
+        csv.write("time,db,floor,snoring,competitor,top,topScore,positive,breathing,snort\n")
+        val samples = File(dir, "samples").apply { mkdirs() }
+        val sampleName = SimpleDateFormat("HH-mm-ss", Locale.ROOT)
 
         var clip: WavWriter? = null
         var clipName: String? = null
         var clipCount = 0
         var lastHeartbeat = start
+        var sample: WavWriter? = null
+        var lastSample = 0L
 
         fun addEvent(c: EventDetector.Closed) {
             night = night.copy(events = night.events + SnoreEvent(c.startMs, c.endMs, clipName, c.peak, c.positives))
@@ -124,14 +135,28 @@ class RecordingService : Service() {
                 var competitor = 0f
                 var top = ""
                 var topScore = 0f
-                if (db >= noise + GATE_DB && ring.size >= Audio.WINDOW) {
+                var breathing = 0f
+                var snort = 0f
+                // Classify every window, not only above the gate, so scores.csv shows what YAMNet hears all night.
+                if (ring.size >= Audio.WINDOW) {
                     val scores = classifier.classify(ring.latest(Audio.WINDOW))
                     snore = scores["Snoring"] ?: 0f
                     competitor = COMPETITORS.maxOf { scores[it] ?: 0f }
                     scores.maxByOrNull { it.value }?.let { top = it.key; topScore = it.value }
+                    breathing = scores["Breathing"] ?: 0f
+                    snort = scores["Snort"] ?: 0f
                 }
-                val positive = snore >= MIN_SNORE_SCORE && snore - competitor >= MIN_MARGIN
-                csv.write("$now,%.1f,%.1f,%.3f,%.3f,\"$top\",%.3f,$positive\n".format(java.util.Locale.ROOT, db, noise, snore, competitor, topScore))
+                val positive = db >= noise + GATE_DB && snore >= MIN_SNORE_SCORE && snore - competitor >= MIN_MARGIN
+                csv.write("$now,%.1f,%.1f,%.3f,%.3f,\"$top\",%.3f,$positive,%.3f,%.3f\n".format(Locale.ROOT, db, noise, snore, competitor, topScore, breathing, snort))
+
+                if (sample == null && now - lastSample >= SAMPLE_EVERY_MS) {
+                    lastSample = now
+                    sample = WavWriter(File(samples, "${sampleName.format(Date(now))}.wav"))
+                }
+                sample?.let {
+                    it.write(block, n)
+                    if (it.durationMs >= SAMPLE_MS) { it.close(); sample = null }
+                }
 
                 clip?.let {
                     it.write(block, n)
@@ -163,6 +188,7 @@ class RecordingService : Service() {
             recorder.stop()
             recorder.release()
             clip?.close()
+            sample?.close()
             detector.flush(end)?.let { addEvent(it) }
             csv.close()
             classifier.close()

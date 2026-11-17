@@ -53,6 +53,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -197,7 +199,7 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
             }
         }
 
-        TextButton(onClick = { shareScores(context, dir) }) { Text("Del data (scores.csv)") }
+        TextButton(onClick = { shareNight(context, dir) }) { Text("Del data (zip)") }
 
         if (!(recording && n.endMs == null)) {
             TextButton(onClick = { NightStore.deleteNight(dir); onBack() }) {
@@ -207,11 +209,18 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
     }
 }
 
-/** Sends the night's scores.csv to another app (mail, Drive …) so the thresholds can be tuned. */
-private fun shareScores(context: Context, dir: File) {
-    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(dir, "scores.csv"))
+/** Zips the night (scores.csv, samples, clips) and sends it to another app (Drive, mail …) for tuning. */
+private fun shareNight(context: Context, dir: File) {
+    val zip = File(context.cacheDir, "${dir.name}.zip")
+    ZipOutputStream(zip.outputStream()).use { out ->
+        dir.walkTopDown().filter { it.isFile }.forEach { file ->
+            out.putNextEntry(ZipEntry(file.relativeTo(dir).path))
+            file.inputStream().use { it.copyTo(out) }
+        }
+    }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", zip)
     val send = Intent(Intent.ACTION_SEND)
-        .setType("text/csv")
+        .setType("application/zip")
         .putExtra(Intent.EXTRA_STREAM, uri)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(send, null))
