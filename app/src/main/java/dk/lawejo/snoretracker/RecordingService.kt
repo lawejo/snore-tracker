@@ -87,8 +87,9 @@ class RecordingService : Service() {
         NightStore.save(dir, night)
 
         val classifier = SnoreClassifier(this@RecordingService)
+        // VOICE_RECOGNITION: no noise suppression or auto gain, which on MIC can remove steady sounds like snoring.
         val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC, Audio.SAMPLE_RATE,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION, Audio.SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
             maxOf(AudioRecord.getMinBufferSize(Audio.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), Audio.HOP * 4),
         )
