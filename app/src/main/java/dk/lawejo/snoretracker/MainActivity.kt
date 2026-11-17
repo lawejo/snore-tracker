@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -104,6 +105,9 @@ private fun App() {
 
     Column(Modifier.padding(24.dp)) {
         Text("Snore Tracker", fontSize = 28.sp)
+        // versionCode is the GitHub build number, the same as "Build N" on the Releases page.
+        val build = PackageInfoCompat.getLongVersionCode(activity.packageManager.getPackageInfo(activity.packageName, 0))
+        Text("Build $build", fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
         Button(
             onClick = {
                 if (recording) {
