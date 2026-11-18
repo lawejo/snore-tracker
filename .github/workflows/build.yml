@@ -47,5 +47,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
+          # Tag the commit that was built, not the default branch.
+          target_commitish: ${{ github.sha }}
           name: Build ${{ github.run_number }}
           files: snore-tracker.apk
