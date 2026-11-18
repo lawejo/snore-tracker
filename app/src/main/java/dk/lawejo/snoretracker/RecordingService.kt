@@ -31,6 +31,7 @@ class RecordingService : Service() {
 
     companion object {
         val isRecording = MutableStateFlow(false)
+        val recordingSince = MutableStateFlow<Long?>(null)
 
         fun start(context: Context) =
             ContextCompat.startForegroundService(context, Intent(context, RecordingService::class.java))
@@ -76,12 +77,14 @@ class RecordingService : Service() {
         runBlocking { job?.cancelAndJoin() }
         wakeLock?.release()
         isRecording.value = false
+        recordingSince.value = null
         super.onDestroy()
     }
 
     @SuppressLint("MissingPermission") // Checked in MainActivity before starting.
     private fun CoroutineScope.record() {
         val start = System.currentTimeMillis()
+        recordingSince.value = start
         val dir = NightStore.create(this@RecordingService, start)
         var night = Night(startMs = start)
         NightStore.save(dir, night)

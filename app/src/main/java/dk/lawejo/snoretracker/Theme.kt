@@ -45,6 +45,10 @@ object Sky {
         error = Skipped,
         outline = Border,
         outlineVariant = Border,
+        surfaceContainerHigh = Mid, // dialogs
+        inverseSurface = Text, // snackbar
+        inverseOnSurface = Mid,
+        inversePrimary = Top,
     )
 
     // Tabular numbers everywhere, so times line up under each other.
