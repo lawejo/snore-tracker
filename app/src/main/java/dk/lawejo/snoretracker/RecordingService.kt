@@ -45,7 +45,8 @@ class RecordingService : Service() {
         private const val CHANNEL = "recording"
 
         // Starting values from the research; tune them using scores.csv.
-        private const val GATE_DB = 10f
+        // Quiet snoring is only 3–7 dB above the floor. False hits are marked in the app the next day.
+        private const val GATE_DB = 4f
         private const val MIN_SNORE_SCORE = 0.30f
         private const val MIN_MARGIN = 0.05f
         private val COMPETITORS = listOf("Speech", "Laughter", "Cough")
@@ -100,7 +101,8 @@ class RecordingService : Service() {
             AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
             maxOf(AudioRecord.getMinBufferSize(Audio.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT), Audio.HOP * 4),
         )
-        val ring = RingBuffer(10 * Audio.SAMPLE_RATE)
+        // An event can start up to a minute before it opens, plus the pre-roll.
+        val ring = RingBuffer(70 * Audio.SAMPLE_RATE)
         val block = ShortArray(Audio.HOP)
         val floor = NoiseFloor()
         val detector = EventDetector()
@@ -166,7 +168,9 @@ class RecordingService : Service() {
                 when (val change = detector.onWindow(now, positive, snore)) {
                     is EventDetector.Opened -> {
                         clipName = "clips/%04d.wav".format(++clipCount)
-                        clip = WavWriter(File(dir, clipName!!)).apply { write(ring.latest(PRE_ROLL)) }
+                        // Start the clip at the event's first positive window, not when it opened.
+                        val sinceStart = ((now - change.startMs) * Audio.SAMPLE_RATE / 1000).toInt()
+                        clip = WavWriter(File(dir, clipName!!)).apply { write(ring.latest(PRE_ROLL + sinceStart)) }
                     }
                     is EventDetector.Closed -> {
                         clip?.close(); clip = null

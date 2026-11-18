@@ -35,6 +35,9 @@ object NightStore {
 
     fun deleteNight(dir: File) = dir.deleteRecursively()
 
+    fun setNotSnore(dir: File, night: Night, event: SnoreEvent, notSnore: Boolean) =
+        save(dir, night.copy(events = night.events.map { if (it == event) it.copy(notSnore = notSnore) else it }))
+
     fun deleteEvent(dir: File, night: Night, event: SnoreEvent) {
         event.clip?.let { File(dir, it).delete() }
         save(dir, night.copy(events = night.events - event))

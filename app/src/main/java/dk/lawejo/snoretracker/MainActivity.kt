@@ -16,6 +16,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -46,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -56,6 +59,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.math.abs
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,6 +84,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private val time = SimpleDateFormat("HH:mm", Locale.ROOT)
+private val clock = SimpleDateFormat("HH:mm:ss", Locale.ROOT)
 private val date = SimpleDateFormat("EEE d. MMM", Locale("da"))
 
 @Composable
@@ -139,29 +145,38 @@ private fun App() {
 }
 
 private fun summary(night: Night) =
-    if (night.events.isEmpty()) "Ingen snorken registreret"
-    else "Snorkede ca. ${night.snoreMinutes} min · ${night.events.size} perioder"
+    if (night.snoreEvents.isEmpty()) "Ingen snorken registreret"
+    else "Snorkede ca. ${night.snoreMinutes} min · ${night.snoreEvents.size} perioder"
 
 @Composable
 private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
     var night by remember(dir) { mutableStateOf(NightStore.load(dir)) }
-    var playing by remember { mutableStateOf<String?>(null) }
+    var selectedStart by remember { mutableStateOf<Long?>(null) }
+    var playing by remember { mutableStateOf(false) }
+    var positionMs by remember { mutableIntStateOf(0) }
     val player = remember { MediaPlayer() }
     val context = androidx.compose.ui.platform.LocalContext.current
     DisposableEffect(Unit) { onDispose { player.release() } }
-
-    fun play(clip: String) {
-        player.reset()
-        if (playing == clip) { playing = null; return }
-        player.setDataSource(File(dir, clip).path)
-        player.setOnCompletionListener { playing = null }
-        player.prepare()
-        player.start()
-        playing = clip
+    LaunchedEffect(playing) {
+        while (playing) { positionMs = player.currentPosition; delay(50) }
     }
 
     val n = night ?: return onBack()
     val end = n.endMs ?: n.heartbeatMs
+    val clips = n.events.filter { it.clip != null }
+    val selected = clips.find { it.startMs == selectedStart }
+
+    fun select(event: SnoreEvent, play: Boolean = true) {
+        player.reset()
+        selectedStart = event.startMs
+        positionMs = 0
+        player.setDataSource(File(dir, event.clip!!).path)
+        player.setOnCompletionListener { playing = false; positionMs = it.duration }
+        player.prepare()
+        if (play) player.start()
+        playing = play
+    }
+    LaunchedEffect(dir) { clips.firstOrNull()?.let { select(it, play = false) } }
 
     Column(Modifier.padding(24.dp)) {
         TextButton(onClick = onBack) { Text("‹ Tilbage") }
@@ -174,27 +189,49 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
             )
         }
         Text(summary(n), fontSize = 22.sp, modifier = Modifier.padding(vertical = 16.dp))
-        Timeline(n, end)
+        Timeline(n, end, selected) { t -> clips.minByOrNull { abs(it.startMs - t) }?.let { select(it) } }
 
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(time.format(Date(n.startMs)), fontSize = 12.sp)
             Text(time.format(Date(end)), fontSize = 12.sp)
         }
 
+        selected?.let { event ->
+            val index = clips.indexOf(event)
+            ClipPlayer(
+                file = File(dir, event.clip!!),
+                event = event,
+                playing = playing,
+                positionMs = positionMs,
+                onToggle = { if (playing) player.pause() else player.start(); playing = !playing },
+                onPrevious = clips.getOrNull(index - 1)?.let { { select(it) } },
+                onNext = clips.getOrNull(index + 1)?.let { { select(it) } },
+                onSeek = { player.seekTo(it); positionMs = it },
+                onToggleNotSnore = {
+                    NightStore.setNotSnore(dir, n, event, !event.notSnore)
+                    night = NightStore.load(dir)
+                },
+            )
+        }
+
         LazyColumn(Modifier.weight(1f).padding(top = 16.dp)) {
             items(n.events, key = { it.startMs }) { event ->
                 Row(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    Modifier.fillMaxWidth().clickable(enabled = event.clip != null) { select(event) }.padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "${time.format(Date(event.startMs))} · ${(event.endMs - event.startMs) / 1000} s",
+                        "${clock.format(Date(event.startMs))} · ${(event.endMs - event.startMs) / 1000} s" +
+                            if (event.notSnore) " · ikke snorken" else "",
+                        color = when {
+                            event.startMs == selectedStart -> MaterialTheme.colorScheme.primary
+                            event.notSnore -> Color.Gray
+                            else -> Color.Unspecified
+                        },
                         modifier = Modifier.weight(1f),
                     )
-                    event.clip?.let { clip ->
-                        TextButton(onClick = { play(clip) }) { Text(if (playing == clip) "■ Stop" else "▶ Afspil") }
-                    }
                     TextButton(onClick = {
+                        if (event.startMs == selectedStart) { player.reset(); playing = false; selectedStart = null }
                         NightStore.deleteEvent(dir, n, event)
                         night = NightStore.load(dir)
                     }) { Text("Slet") }
@@ -230,16 +267,91 @@ private fun shareNight(context: Context, dir: File) {
     context.startActivity(Intent.createChooser(send, null))
 }
 
-/** The night as a bar, with a red mark for every snore period. */
+/** The night as a bar with a mark for every snore period. Tapping plays the nearest clip. */
 @Composable
-private fun Timeline(night: Night, end: Long) {
+private fun Timeline(night: Night, end: Long, selected: SnoreEvent?, onTap: (Long) -> Unit) {
     val span = (end - night.startMs).coerceAtLeast(1).toFloat()
-    Canvas(Modifier.fillMaxWidth().height(40.dp)) {
+    Canvas(
+        Modifier.fillMaxWidth().height(56.dp).pointerInput(night, end) {
+            detectTapGestures { onTap(night.startMs + (it.x / size.width * span).toLong()) }
+        },
+    ) {
         drawRect(Color(0xFF2E3440))
         night.events.forEach { e ->
             val x = (e.startMs - night.startMs) / span * size.width
             val w = ((e.endMs - e.startMs) / span * size.width).coerceAtLeast(3f)
-            drawRect(Color(0xFFE5534B), topLeft = Offset(x, 0f), size = Size(w, size.height))
+            val color = when {
+                e == selected -> Color(0xFFE5C07B)
+                e.notSnore -> Color(0xFF5C6370)
+                else -> Color(0xFFE5534B)
+            }
+            drawRect(color, topLeft = Offset(x, 0f), size = Size(w, size.height))
         }
     }
 }
+
+/** One clip: time, position and length, waveform (tap to seek), previous/next and marking as not snoring. */
+@Composable
+private fun ClipPlayer(
+    file: File,
+    event: SnoreEvent,
+    playing: Boolean,
+    positionMs: Int,
+    onToggle: () -> Unit,
+    onPrevious: (() -> Unit)?,
+    onNext: (() -> Unit)?,
+    onSeek: (Int) -> Unit,
+    onToggleNotSnore: () -> Unit,
+) {
+    val peaks = remember(file) { peaks(file) }
+    val durationMs = ((file.length() - 44) * 1000 / (2 * Audio.SAMPLE_RATE)).toInt()
+    Card(Modifier.fillMaxWidth().padding(top = 16.dp)) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(clock.format(Date(event.startMs)), fontSize = 22.sp, modifier = Modifier.weight(1f))
+                Text("${mmss(positionMs)} / ${mmss(durationMs)}")
+            }
+            Canvas(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp).height(64.dp).pointerInput(durationMs) {
+                    detectTapGestures { onSeek((it.x / size.width * durationMs).toInt()) }
+                },
+            ) {
+                val bar = size.width / peaks.size
+                peaks.forEachIndexed { i, p ->
+                    val h = (p * size.height).coerceAtLeast(2f)
+                    drawRect(Color(0xFF4A90D9), topLeft = Offset(i * bar, (size.height - h) / 2), size = Size(bar * 0.7f, h))
+                }
+                val x = positionMs.toFloat() / durationMs.coerceAtLeast(1) * size.width
+                drawLine(Color(0xFFE5C07B), Offset(x, 0f), Offset(x, size.height), strokeWidth = 3f)
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { onPrevious?.invoke() }, enabled = onPrevious != null) { Text("⏮", fontSize = 24.sp) }
+                Button(onClick = onToggle) { Text(if (playing) "⏸" else "▶", fontSize = 24.sp) }
+                TextButton(onClick = { onNext?.invoke() }, enabled = onNext != null) { Text("⏭", fontSize = 24.sp) }
+            }
+            TextButton(onClick = onToggleNotSnore, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text(if (event.notSnore) "Markeret som ikke snorken · fortryd" else "Ikke snorken")
+            }
+        }
+    }
+}
+
+/** The loudest sample in each of [count] slices of a 16-bit wav, scaled so the loudest slice is 1. */
+private fun peaks(file: File, count: Int = 150): FloatArray {
+    val bytes = file.readBytes()
+    val samples = (bytes.size - 44) / 2
+    val perSlice = (samples / count).coerceAtLeast(1)
+    val levels = FloatArray(count) { i ->
+        (i * perSlice until minOf((i + 1) * perSlice, samples)).maxOfOrNull { s ->
+            abs((bytes[45 + 2 * s].toInt() shl 8) or (bytes[44 + 2 * s].toInt() and 0xFF)).toFloat()
+        } ?: 0f
+    }
+    val loudest = levels.max().coerceAtLeast(1f)
+    return FloatArray(count) { levels[it] / loudest }
+}
+
+private fun mmss(ms: Int) = "%d:%02d".format(ms / 60_000, ms / 1000 % 60)
