@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +62,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.math.abs
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,6 +104,13 @@ private fun App() {
         }
     }
 
+    // versionCode is the GitHub build number, the same as "Build N" on the Releases page.
+    val build = PackageInfoCompat.getLongVersionCode(activity.packageManager.getPackageInfo(activity.packageName, 0))
+    var update by remember { mutableStateOf<Updater.Release?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { update = Updater.latest()?.takeIf { it.build > build } }
+
     val dir = selected
     if (dir != null) {
         BackHandler { selected = null }
@@ -111,9 +120,20 @@ private fun App() {
 
     Column(Modifier.padding(24.dp)) {
         Text("Snore Tracker", fontSize = 28.sp)
-        // versionCode is the GitHub build number, the same as "Build N" on the Releases page.
-        val build = PackageInfoCompat.getLongVersionCode(activity.packageManager.getPackageInfo(activity.packageName, 0))
         Text("Build $build", fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+        // Installing restarts the app, so it isn't offered while recording.
+        update?.takeIf { !recording }?.let { release ->
+            Button(
+                onClick = {
+                    downloading = true
+                    scope.launch { runCatching { Updater.install(activity, release) }; downloading = false }
+                },
+                enabled = !downloading,
+                modifier = Modifier.padding(top = 8.dp),
+            ) {
+                Text(if (downloading) "Henter build ${release.build} …" else "Opdatér til build ${release.build}")
+            }
+        }
         Button(
             onClick = {
                 if (recording) {
