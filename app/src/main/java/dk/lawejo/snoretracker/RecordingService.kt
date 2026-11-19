@@ -126,6 +126,8 @@ class RecordingService : Service() {
             NightStore.save(dir, night)
         }
 
+        var previousDb = Float.NEGATIVE_INFINITY
+
         recorder.startRecording()
         try {
             while (isActive) {
@@ -135,6 +137,10 @@ class RecordingService : Service() {
                 ring.write(block, n)
                 val db = Audio.dbfs(block, n)
                 val noise = floor.add(db)
+                // YAMNet hears the last two blocks, so the gate uses the louder one. Otherwise a snore
+                // in the first half of the window is classified as snoring but rejected as too quiet.
+                val windowDb = maxOf(db, previousDb)
+                previousDb = db
 
                 var snore = 0f
                 var competitor = 0f
@@ -151,7 +157,7 @@ class RecordingService : Service() {
                     breathing = scores["Breathing"] ?: 0f
                     snort = scores["Snort"] ?: 0f
                 }
-                val positive = db >= noise + GATE_DB && snore >= MIN_SNORE_SCORE && snore - competitor >= MIN_MARGIN
+                val positive = windowDb >= noise + GATE_DB && snore >= MIN_SNORE_SCORE && snore - competitor >= MIN_MARGIN
                 csv.write("$now,%.1f,%.1f,%.3f,%.3f,\"$top\",%.3f,$positive,%.3f,%.3f\n".format(Locale.ROOT, db, noise, snore, competitor, topScore, breathing, snort))
 
                 if (sample == null && now - lastSample >= SAMPLE_EVERY_MS) {
