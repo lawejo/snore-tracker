@@ -75,6 +75,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    /** Counts every time the app comes to the foreground, so the update check reruns. */
+    val resumes = mutableIntStateOf(0)
+
+    override fun onResume() {
+        super.onResume()
+        resumes.intValue++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -144,7 +152,10 @@ private fun App() {
     var update by remember { mutableStateOf<Updater.Release?>(null) }
     var downloading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { update = Updater.latest()?.takeIf { it.build > build } }
+    // Rechecks every time the app comes to the foreground; a failed check keeps what we knew.
+    LaunchedEffect(activity.resumes.intValue) {
+        Updater.latest()?.let { latest -> update = latest.takeIf { it.build > build } }
+    }
 
     if (sleeping && recording) {
         SleepScreen(onWake = { sleeping = false })
