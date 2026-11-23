@@ -50,9 +50,12 @@ class RecordingService : Service() {
         private const val GATE_DB = 4f
         private const val MIN_SNORE_SCORE = 0.30f
         private const val MIN_MARGIN = 0.05f
+        // Whistling nose breathing scores high on Snoring too, but also on Snort. Real snoring almost never does.
+        private const val MAX_SNORT = 0.02f
         private val COMPETITORS = listOf("Speech", "Laughter", "Cough")
         private const val PRE_ROLL = 5 * Audio.SAMPLE_RATE
-        private const val MAX_CLIP_MS = 30_000L
+        // Only a safety cap; a clip normally runs until the event closes.
+        private const val MAX_CLIP_MS = 10 * 60_000L
 
         // Diagnostics: a fixed sample of the night, whether or not snoring is detected.
         private const val SAMPLE_EVERY_MS = 10 * 60_000L
@@ -110,7 +113,7 @@ class RecordingService : Service() {
         val floor = NoiseFloor()
         val detector = EventDetector()
         val csv = File(dir, "scores.csv").bufferedWriter()
-        csv.write("time,db,floor,snoring,competitor,top,topScore,positive,breathing,snort\n")
+        csv.write("time,db,floor,snoring,competitor,top,topScore,positive,breathing,snort,bass\n")
         val samples = File(dir, "samples").apply { mkdirs() }
         val sampleName = SimpleDateFormat("HH-mm-ss", Locale.ROOT)
 
@@ -148,17 +151,20 @@ class RecordingService : Service() {
                 var topScore = 0f
                 var breathing = 0f
                 var snort = 0f
+                var bass = 0f
                 // Classify every window, not only above the gate, so scores.csv shows what YAMNet hears all night.
                 if (ring.size >= Audio.WINDOW) {
-                    val scores = classifier.classify(ring.latest(Audio.WINDOW))
+                    val window = ring.latest(Audio.WINDOW)
+                    val scores = classifier.classify(window)
                     snore = scores["Snoring"] ?: 0f
                     competitor = COMPETITORS.maxOf { scores[it] ?: 0f }
                     scores.maxByOrNull { it.value }?.let { top = it.key; topScore = it.value }
                     breathing = scores["Breathing"] ?: 0f
                     snort = scores["Snort"] ?: 0f
+                    bass = Audio.bassRatio(window)
                 }
-                val positive = windowDb >= noise + GATE_DB && snore >= MIN_SNORE_SCORE && snore - competitor >= MIN_MARGIN
-                csv.write("$now,%.1f,%.1f,%.3f,%.3f,\"$top\",%.3f,$positive,%.3f,%.3f\n".format(Locale.ROOT, db, noise, snore, competitor, topScore, breathing, snort))
+                val positive = windowDb >= noise + GATE_DB && snore >= MIN_SNORE_SCORE && snore - competitor >= MIN_MARGIN && snort < MAX_SNORT
+                csv.write("$now,%.1f,%.1f,%.3f,%.3f,\"$top\",%.3f,$positive,%.3f,%.3f,%.1f\n".format(Locale.ROOT, db, noise, snore, competitor, topScore, breathing, snort, bass))
 
                 if (sample == null && now - lastSample >= SAMPLE_EVERY_MS) {
                     lastSample = now
