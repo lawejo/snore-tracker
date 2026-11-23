@@ -30,12 +30,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -71,8 +73,10 @@ import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     /** Counts every time the app comes to the foreground, so the update check reruns. */
@@ -270,6 +274,8 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
     val player = remember { MediaPlayer() }
     val context = androidx.compose.ui.platform.LocalContext.current
     var confirmDelete by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     DisposableEffect(Unit) { onDispose { player.release() } }
     LaunchedEffect(playing) {
         while (playing) { positionMs = player.currentPosition; delay(50) }
@@ -354,7 +360,23 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
             }
         }
 
-        TextButton(onClick = { shareNight(context, dir) }) { Text("Del data (zip)") }
+        TextButton(
+            enabled = !sharing,
+            onClick = {
+                sharing = true
+                scope.launch {
+                    runCatching { shareNight(context, dir) }
+                    sharing = false
+                }
+            },
+        ) {
+            if (sharing) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Text("Pakker data …", Modifier.padding(start = 8.dp))
+            } else {
+                Text("Del data (zip)")
+            }
+        }
 
         if (!(recording && n.endMs == null)) {
             TextButton(onClick = { confirmDelete = true }) {
@@ -379,12 +401,15 @@ private fun NightScreen(dir: File, recording: Boolean, onBack: () -> Unit) {
 }
 
 /** Zips the night (scores.csv, samples, clips) and sends it to another app (Drive, mail …) for tuning. */
-private fun shareNight(context: Context, dir: File) {
+private suspend fun shareNight(context: Context, dir: File) {
     val zip = File(context.cacheDir, "${dir.name}.zip")
-    ZipOutputStream(zip.outputStream()).use { out ->
-        dir.walkTopDown().filter { it.isFile }.forEach { file ->
-            out.putNextEntry(ZipEntry(file.relativeTo(dir).path))
-            file.inputStream().use { it.copyTo(out) }
+    // Zipping a night's audio takes several seconds, so it runs off the main thread.
+    withContext(Dispatchers.IO) {
+        ZipOutputStream(zip.outputStream()).use { out ->
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                out.putNextEntry(ZipEntry(file.relativeTo(dir).path))
+                file.inputStream().use { it.copyTo(out) }
+            }
         }
     }
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", zip)
